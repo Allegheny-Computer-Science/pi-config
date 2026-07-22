@@ -1,0 +1,22 @@
+{
+  "defaultProvider": "chompers",
+  "defaultModel": "deepseek-v4-flash",
+  "defaultThinkingLevel": "medium",
+  "retry": {
+    "enabled": true,
+    "maxRetries": 3,
+    "baseDelayMs": 2000
+  },
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  },
+  "extensions": [
+    "./extensions/chompers-auth.ts"
+  ],
+  "packages": [
+    "git:github.com/dluman/auditor"
+  ],
+  "enableSkillCommands": true
+}
