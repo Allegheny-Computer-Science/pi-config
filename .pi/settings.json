@@ -1,7 +1,7 @@
 {
   "defaultProvider": "chompers",
   "defaultModel": "deepseek-v4-flash",
-  "defaultThinkingLevel": "medium",
+  "defaultThinkingLevel": "high",
   "retry": {
     "enabled": true,
     "maxRetries": 3,

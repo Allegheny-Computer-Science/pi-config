@@ -1,0 +1,5 @@
+{
+  "auditor": {
+    "autoExportInterval": "5"
+  }
+}
