@@ -89,13 +89,11 @@ async function fetchWithTimeout(
   timeoutMs: number,
   signal?: AbortSignal
 ): Promise<Response> {
-  console.log(`[chompers-auth] fetchWithTimeout ${init.method ?? "GET"} ${url} (timeout=${timeoutMs}ms)`);
   const controller = new AbortController();
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
-      console.log(`[chompers-auth] fetchWithTimeout ABORTING ${url} after ${timeoutMs}ms`);
       controller.abort();
       reject(new Error(`Request timed out after ${timeoutMs}ms: ${url}`));
     }, timeoutMs);
@@ -110,10 +108,7 @@ async function fetchWithTimeout(
   };
 
   if (signal) {
-    onAbort = () => {
-      console.log(`[chompers-auth] fetchWithTimeout parent signal aborted for ${url}`);
-      controller.abort();
-    };
+    onAbort = () => controller.abort();
     if (signal.aborted) {
       controller.abort();
     } else {
@@ -122,13 +117,7 @@ async function fetchWithTimeout(
   }
 
   try {
-    const response = await Promise.race([fetch(url, { ...init, signal: controller.signal }), timeoutPromise]);
-    console.log(`[chompers-auth] fetchWithTimeout ${url} response ${response.status} ${response.statusText}`);
-    return response;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.log(`[chompers-auth] fetchWithTimeout ${url} error: ${message}`);
-    throw error;
+    return await Promise.race([fetch(url, { ...init, signal: controller.signal }), timeoutPromise]);
   } finally {
     cleanup();
   }
@@ -138,7 +127,6 @@ async function exchangeGitHubToken(
   authBaseUrl: string,
   githubToken: string
 ): Promise<OAuthCredentials> {
-  console.log("[chompers-auth] exchangeGitHubToken: exchanging GITHUB_TOKEN for session token");
   const response = await fetchWithTimeout(
     `${authBaseUrl}/auth/token`,
     {
@@ -153,27 +141,22 @@ async function exchangeGitHubToken(
   await assertOk(response, "Failed to exchange GitHub token for llm-server session");
 
   const data = (await response.json()) as SessionResponse;
-  const token = data.session_token;
-  console.log(`[chompers-auth] exchangeGitHubToken: received token (length=${token?.length ?? 0})`);
-  if (!token) {
+  if (!data.session_token) {
     throw new Error("llm-server /auth/token response did not include a session_token");
   }
 
   const expiresIn = data.expires_in ?? 28800;
-  const credentials: OAuthCredentials = {
-    access: token,
+  return {
+    access: data.session_token,
     refresh: "",
     expires: Date.now() + expiresIn * 1000,
   };
-  console.log(`[chompers-auth] exchangeGitHubToken: returning credentials (expires=${credentials.expires})`);
-  return credentials;
 }
 
 async function runDeviceFlow(
   authBaseUrl: string,
   callbacks: OAuthLoginCallbacks
 ): Promise<OAuthCredentials> {
-  console.log("[chompers-auth] runDeviceFlow: starting device code request");
   const codeResponse = await fetchWithTimeout(
     `${authBaseUrl}/auth/device/code`,
     { method: "POST" },
@@ -183,7 +166,6 @@ async function runDeviceFlow(
   await assertOk(codeResponse, "Failed to start GitHub device code flow");
 
   const codeData = (await codeResponse.json()) as DeviceCodeResponse;
-  console.log(`[chompers-auth] runDeviceFlow: got device_code=${codeData.device_code?.slice(0, 8)} user_code=${codeData.user_code}`);
   if (!codeData.device_code || !codeData.user_code) {
     throw new Error("llm-server /auth/device/code response was missing device_code or user_code");
   }
@@ -203,16 +185,12 @@ async function runDeviceFlow(
   let pollCount = 0;
   let lastProgressAt = 0;
 
-  console.log(`[chompers-auth] runDeviceFlow: polling until ${new Date(deadline).toISOString()}, interval=${intervalMs}ms`);
-
   while (Date.now() < deadline) {
     if (callbacks.signal?.aborted) {
-      console.log("[chompers-auth] runDeviceFlow: login cancelled by signal");
       throw new Error("Login cancelled");
     }
 
     const remainingMs = deadline - Date.now();
-    console.log(`[chompers-auth] runDeviceFlow: sleeping ${Math.min(intervalMs, remainingMs)}ms`);
     await abortableSleep(Math.min(intervalMs, remainingMs), callbacks.signal);
 
     pollCount += 1;
@@ -221,7 +199,6 @@ async function runDeviceFlow(
       callbacks.onProgress?.(`Polling GitHub authorization status... (poll #${pollCount})`);
       lastProgressAt = now;
     }
-    console.log(`[chompers-auth] runDeviceFlow: poll #${pollCount}`);
 
     const pollResponse = await fetchWithTimeout(
       `${authBaseUrl}/auth/device/poll`,
@@ -235,7 +212,6 @@ async function runDeviceFlow(
     );
 
     const responseText = await pollResponse.text();
-    console.log(`[chompers-auth] runDeviceFlow: poll #${pollCount} body=${responseText}`);
 
     let pollData: SessionResponse;
     try {
@@ -254,24 +230,19 @@ async function runDeviceFlow(
       (pollData as any).access;
 
     if (pollResponse.ok && pollData.status === "complete" && token) {
-      console.log(`[chompers-auth] runDeviceFlow: complete, token length=${token.length}`);
       const expiresIn = pollData.expires_in ?? 28800;
-      const credentials: OAuthCredentials = {
+      return {
         access: token,
         refresh: "",
         expires: Date.now() + expiresIn * 1000,
       };
-      console.log(`[chompers-auth] runDeviceFlow: returning credentials (expires=${credentials.expires})`);
-      return credentials;
     }
 
     if (pollResponse.ok && pollData.status === "complete" && !token) {
-      console.log("[chompers-auth] runDeviceFlow: status complete but no token found");
       throw new Error("llm-server device flow completed but did not return a session_token");
     }
 
     const error = pollData.error ?? pollData.status;
-    console.log(`[chompers-auth] runDeviceFlow: poll #${pollCount} error/status=${error}`);
 
     if (error === "pending" || error === "authorization_pending") {
       continue;
@@ -280,7 +251,6 @@ async function runDeviceFlow(
     if (error === "slow_down") {
       slowDownResponses += 1;
       intervalMs = Math.max(minIntervalMs, intervalMs + 5000);
-      console.log(`[chompers-auth] runDeviceFlow: slow_down, new interval=${intervalMs}ms`);
       continue;
     }
 
@@ -310,24 +280,20 @@ async function runDeviceFlow(
     slowDownResponses > 0
       ? "Device flow timed out after one or more slow_down responses. This is often caused by clock drift in WSL or VM environments. Please sync or restart the VM clock and try again."
       : "GitHub device code expired before authorization was completed";
-  console.log(`[chompers-auth] runDeviceFlow: ${message}`);
   throw new Error(message);
 }
 
 function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      console.log("[chompers-auth] abortableSleep: already aborted");
       reject(new Error("Login cancelled"));
       return;
     }
     const timeout = setTimeout(() => {
-      console.log(`[chompers-auth] abortableSleep: ${ms}ms elapsed, resuming`);
       signal?.removeEventListener("abort", onAbort);
       resolve();
     }, ms);
     const onAbort = () => {
-      console.log("[chompers-auth] abortableSleep: abort event received");
       clearTimeout(timeout);
       reject(new Error("Login cancelled"));
     };
@@ -341,13 +307,10 @@ function createLlmServerOAuth(authBaseUrl: string) {
 
     async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
       const githubToken = process.env.GITHUB_TOKEN;
-      console.log(`[chompers-auth] login: GITHUB_TOKEN ${githubToken ? "set" : "not set"}, using ${githubToken ? "token exchange" : "device flow"}`);
       if (githubToken) {
         return exchangeGitHubToken(authBaseUrl, githubToken);
       }
-      const result = await runDeviceFlow(authBaseUrl, callbacks);
-      console.log("[chompers-auth] login: device flow returned, forwarding credentials to Pi");
-      return result;
+      return runDeviceFlow(authBaseUrl, callbacks);
     },
 
     async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {

@@ -37,6 +37,11 @@ Students do not need to configure providers, model endpoints, or authentication 
      exchanging a `GITHUB_TOKEN`.
    - The **Zen API key**, supplied by your instructor and sent as `X-Zen-Api-Key`.
 
+   The `.env.template` also sets `PI_OFFLINE=true` by default. This prevents Pi
+   from trying to refresh model catalogs from `pi.dev` after login, which can
+   hang in restricted networks where only the `llm.chompe.rs` proxy is reachable.
+   The chompers proxy still works because it uses the local model catalog.
+
    The active extension automatically loads `.env` from the project root, so a
    plain `source .env` is sufficient.
 
@@ -124,13 +129,15 @@ This configuration is intended to be copied into assignment repositories. When
 distributing it:
 
 1. Keep the `.pi/` directory under version control.
-2. Add `.pi/git/` and `.pi/.pi/` to `.gitignore` so students do not commit cache
-   and session data.
+2. Add `.pi/git/`, `.pi/.pi/`, `.pi/.sessions`, and `.session.jsonl` to
+   `.gitignore` so students do not commit cache and session data.
 3. Provide students with the required `ZEN_API_KEY` (and optionally a
    `GITHUB_TOKEN` if you want to skip the device flow).
-4. Edit `.pi/settings.json` to select the model, thinking level, and packages
+4. Leave `PI_OFFLINE=true` in `.env.template` so students do not hang on the
+   post-login model-catalog refresh in restricted networks.
+5. Edit `.pi/settings.json` to select the model, thinking level, and packages
    appropriate for the assignment.
-5. Add or remove extensions under `.pi/extensions/` as needed.
+6. Add or remove extensions under `.pi/extensions/` as needed.
 
 ## Customizing
 
