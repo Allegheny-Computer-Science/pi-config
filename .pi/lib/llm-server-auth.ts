@@ -176,14 +176,11 @@ async function runDeviceFlow(
     intervalSeconds: codeData.interval,
     expiresInSeconds: codeData.expires_in,
   });
-  callbacks.onProgress?.("Waiting for GitHub authorization...");
 
   const deadline = Date.now() + codeData.expires_in * 1000;
   const minIntervalMs = 1000;
   let intervalMs = Math.max(minIntervalMs, Math.floor((codeData.interval ?? 5) * 1000));
   let slowDownResponses = 0;
-  let pollCount = 0;
-  let lastProgressAt = 0;
 
   while (Date.now() < deadline) {
     if (callbacks.signal?.aborted) {
@@ -192,13 +189,6 @@ async function runDeviceFlow(
 
     const remainingMs = deadline - Date.now();
     await abortableSleep(Math.min(intervalMs, remainingMs), callbacks.signal);
-
-    pollCount += 1;
-    const now = Date.now();
-    if (now - lastProgressAt > 10000) {
-      callbacks.onProgress?.(`Polling GitHub authorization status... (poll #${pollCount})`);
-      lastProgressAt = now;
-    }
 
     const pollResponse = await fetchWithTimeout(
       `${authBaseUrl}/auth/device/poll`,
