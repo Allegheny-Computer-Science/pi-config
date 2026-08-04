@@ -83,16 +83,53 @@ function assertOk(response: Response, context: string): Promise<void> {
   });
 }
 
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  let onAbort: (() => void) | undefined;
+  const cleanup = () => {
+    clearTimeout(timeoutId);
+    if (signal && onAbort) {
+      signal.removeEventListener("abort", onAbort);
+    }
+  };
+
+  if (signal) {
+    onAbort = () => controller.abort();
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  }
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    cleanup();
+  }
+}
+
 async function exchangeGitHubToken(
   authBaseUrl: string,
   githubToken: string
 ): Promise<OAuthCredentials> {
-  const response = await fetch(`${authBaseUrl}/auth/token`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${githubToken}`,
+  const response = await fetchWithTimeout(
+    `${authBaseUrl}/auth/token`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${githubToken}`,
+      },
     },
-  });
+    30000
+  );
 
   await assertOk(response, "Failed to exchange GitHub token for llm-server session");
 
@@ -113,9 +150,12 @@ async function runDeviceFlow(
   authBaseUrl: string,
   callbacks: OAuthLoginCallbacks
 ): Promise<OAuthCredentials> {
-  const codeResponse = await fetch(`${authBaseUrl}/auth/device/code`, {
-    method: "POST",
-  });
+  const codeResponse = await fetchWithTimeout(
+    `${authBaseUrl}/auth/device/code`,
+    { method: "POST" },
+    30000,
+    callbacks.signal
+  );
   await assertOk(codeResponse, "Failed to start GitHub device code flow");
 
   const codeData = (await codeResponse.json()) as DeviceCodeResponse;
@@ -129,24 +169,43 @@ async function runDeviceFlow(
     intervalSeconds: codeData.interval,
     expiresInSeconds: codeData.expires_in,
   });
+  callbacks.onProgress?.("Waiting for GitHub authorization...");
 
   const deadline = Date.now() + codeData.expires_in * 1000;
-  const intervalMs = Math.max((codeData.interval ?? 5) * 1000, 1000);
+  const minIntervalMs = 1000;
+  let intervalMs = Math.max(minIntervalMs, Math.floor((codeData.interval ?? 5) * 1000));
+  let slowDownResponses = 0;
 
   while (Date.now() < deadline) {
-    await sleep(intervalMs);
+    if (callbacks.signal?.aborted) {
+      throw new Error("Login cancelled");
+    }
 
-    const pollResponse = await fetch(`${authBaseUrl}/auth/device/poll`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_code: codeData.device_code }),
-    });
+    const remainingMs = deadline - Date.now();
+    await abortableSleep(Math.min(intervalMs, remainingMs), callbacks.signal);
 
-    await assertOk(pollResponse, "Failed to poll llm-server device code status");
+    callbacks.onProgress?.("Polling GitHub authorization status...");
+    const pollResponse = await fetchWithTimeout(
+      `${authBaseUrl}/auth/device/poll`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_code: codeData.device_code }),
+      },
+      30000,
+      callbacks.signal
+    );
 
-    const pollData = (await pollResponse.json()) as SessionResponse;
+    let pollData: SessionResponse;
+    try {
+      pollData = (await pollResponse.json()) as SessionResponse;
+    } catch {
+      throw new Error(
+        `llm-server /auth/device/poll returned non-JSON: ${pollResponse.status} ${pollResponse.statusText}`
+      );
+    }
 
-    if (pollData.status === "complete") {
+    if (pollResponse.ok && pollData.status === "complete") {
       if (!pollData.session_token) {
         throw new Error("llm-server device flow completed but did not return a session_token");
       }
@@ -158,16 +217,63 @@ async function runDeviceFlow(
       };
     }
 
-    if (pollData.status !== "pending") {
-      throw new Error(`Unexpected llm-server device poll status: ${pollData.status ?? "unknown"}`);
+    const error = pollData.error ?? pollData.status;
+
+    if (error === "pending" || error === "authorization_pending") {
+      continue;
     }
+
+    if (error === "slow_down") {
+      slowDownResponses += 1;
+      intervalMs = Math.max(minIntervalMs, intervalMs + 5000);
+      continue;
+    }
+
+    const terminalErrors = [
+      "access_denied",
+      "expired_token",
+      "invalid_grant",
+      "failed",
+      "unsupported_grant_type",
+      "invalid_client",
+      "invalid_request",
+    ];
+    if (error && terminalErrors.includes(error)) {
+      throw new Error(`llm-server device flow failed: ${error}`);
+    }
+
+    if (!pollResponse.ok) {
+      throw new Error(
+        `llm-server /auth/device/poll returned ${pollResponse.status} ${pollResponse.statusText}: ${JSON.stringify(pollData)}`
+      );
+    }
+
+    throw new Error(`Unexpected llm-server device poll status: ${pollData.status ?? "unknown"}`);
   }
 
-  throw new Error("GitHub device code expired before authorization was completed");
+  const message =
+    slowDownResponses > 0
+      ? "Device flow timed out after one or more slow_down responses. This is often caused by clock drift in WSL or VM environments. Please sync or restart the VM clock and try again."
+      : "GitHub device code expired before authorization was completed";
+  throw new Error(message);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Login cancelled"));
+      return;
+    }
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(new Error("Login cancelled"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function createLlmServerOAuth(authBaseUrl: string) {
