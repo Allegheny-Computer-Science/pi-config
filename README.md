@@ -1,49 +1,44 @@
-# Pi Coding Agent — Allegheny College Base Template
+# Pi Starting Configuration — Restrictive LLM Proxy
 
-Base configuration template for the [Pi coding agent](https://github.com/earendil-works/pi) at Allegheny College. This repository provides a ready-to-use starting point for students and faculty working with Pi across courses and research projects.
+This repository is a **basic starting configuration** for the [Pi coding agent](https://github.com/earendil-works/pi). It is designed to be used with a **restrictive LLM proxy** (`llm-server`, deployed at `https://llm.chompe.rs`) and is intended as a **basis for distribution with programming assignments and other course materials that incorporate LLMs**.
 
-## Overview
+Instructors and maintainers can copy this configuration into an assignment repository, adjust it as needed, and give students a ready-to-run agent setup that routes requests through a controlled, institution-managed proxy.
 
-Pi is an AI-powered coding assistant that runs in your terminal. This template supplies the minimum configuration needed to connect Pi to the OpenCode API proxy (`llm-server`, deployed at `https://llm.chompe.rs`) and optional tool packages.
+## What This Configuration Provides
 
-## Quick Start
+- A minimal, working Pi configuration that connects to a restrictive LLM proxy.
+- A provider extension (`chompers`) that authenticates users through the proxy and forwards requests under institutional control.
+- A default model and behavior settings tuned for general coding assistance.
+- An optional quality-analysis package (`auditor`) that can be enabled or removed per assignment.
 
-1. **Clone this template** into a new project directory:
+Students do not need to configure providers, model endpoints, or authentication flows themselves; they only need to install Pi, set the required environment variables, and run `/login chompers`.
 
-   ```bash
-   git clone <this-repo-url> my-project
-   cd my-project
-   rm -rf .git
-   git init
-   ```
+## Quick Start (For Students)
 
-2. **Ensure Pi is installed** (requires Node.js ≥ 20):
+1. **Obtain this configuration** as part of your assignment repository.
+
+2. **Install Pi** (requires Node.js ≥ 20):
 
    ```bash
    npm install -g @earendil-works/pi-coding-agent
    ```
 
-3. **Set required environment variables** for the OpenCode API proxy:
+3. **Set the required environment variables**:
 
    ```bash
    cp .env.template .env
-   # Edit .env with your actual Zen API key and optional GitHub token
+   # Edit .env with the Zen API key supplied by your instructor
    source .env
    ```
 
-   The Pi harness connects to the `llm-server` proxy at `https://llm.chompe.rs`.
-   The proxy requires two auth gates:
+   The proxy requires two gates:
 
-   - A GitHub Enterprise session token, obtained via OAuth device flow or by
+   - A **GitHub Enterprise session token**, obtained via OAuth device flow or by
      exchanging a `GITHUB_TOKEN`.
-   - The upstream Opencode Zen API key, sent as `X-Zen-Api-Key`.
+   - The **Zen API key**, supplied by your instructor and sent as `X-Zen-Api-Key`.
 
    The active extension automatically loads `.env` from the project root, so a
-   plain `source .env` is sufficient. If you prefer to export the variables
-   yourself, use `set -a && source .env && set +a`.
-
-   See [`dluman/llm-server`](https://github.com/dluman/llm-server) for the
-   proxy source and deployment details.
+   plain `source .env` is sufficient.
 
 4. **Launch Pi and authenticate**:
 
@@ -51,16 +46,16 @@ Pi is an AI-powered coding assistant that runs in your terminal. This template s
    pi
    ```
 
-   If you set `GITHUB_TOKEN` in `.env`, run:
+   Inside Pi, run:
 
    ```
    /login chompers
    ```
 
-   If you did not set `GITHUB_TOKEN`, Pi will show a GitHub device code when you
-   run `/login chompers`. Open the displayed URL in your browser, enter the code,
-   and authorize the GitHub App. Pi will then exchange the device code for an
-   llm-server session token.
+   If you set `GITHUB_TOKEN` in `.env`, the login exchanges it immediately.
+   Otherwise, Pi displays a GitHub device code; open the URL in your browser,
+   enter the code, and authorize the GitHub App. Pi will then exchange the
+   device code for a proxy session token.
 
 ## Repository Structure
 
@@ -69,8 +64,8 @@ Pi is an AI-powered coding assistant that runs in your terminal. This template s
 └── .pi/
     ├── settings.json            # Agent configuration (provider, model, behavior)
     ├── extensions/
-    │   ├── chompers-auth.ts     # Active provider extension for the Chompers proxy
-    │   └── opencode-models.json # Inlined OpenCode (Zen) model catalog
+    │   ├── chompers-auth.ts     # Provider extension for the restrictive proxy
+    │   └── opencode-models.json # Inlined model catalog exposed by the proxy
     ├── lib/
     │   └── llm-server-auth.ts   # OAuth / session-token helpers
     ├── git/                     # Pi package cache (auto-managed)
@@ -79,66 +74,72 @@ Pi is an AI-powered coding assistant that runs in your terminal. This template s
 
 ## Configuration
 
-All Pi behavior is driven by `.pi/settings.json`. The default configuration includes:
+Pi behavior is driven by `.pi/settings.json`. The default configuration includes:
 
-| Setting               | Value              | Description                                  |
-|-----------------------|--------------------|----------------------------------------------|
-| `defaultProvider`     | `chompers`         | Uses the OpenCode API proxy (`llm-server`)   |
-| `defaultModel`        | `deepseek-v4-pro`  | DeepSeek V4 Pro model                        |
-| `defaultThinkingLevel`| `medium`           | Balanced reasoning depth               |
-| `retry.enabled`       | `true`             | Automatic retry on transient failures  |
-| `compaction.enabled`  | `true`             | Context window management              |
-| `enableSkillCommands` | `true`             | Built-in skill command support         |
+| Setting                | Value               | Description                                  |
+|------------------------|---------------------|----------------------------------------------|
+| `defaultProvider`      | `chompers`          | Uses the restrictive LLM proxy (`llm-server`)|
+| `defaultModel`         | `deepseek-v4-flash` | Default model exposed by the proxy           |
+| `defaultThinkingLevel` | `medium`            | Balanced reasoning depth                     |
+| `retry.enabled`        | `true`              | Automatic retry on transient failures        |
+| `compaction.enabled`   | `true`              | Context window management                    |
+| `enableSkillCommands`  | `true`              | Built-in skill command support               |
 
 ### Provider Extension
 
-The `.pi/extensions/chompers-auth.ts` file registers a new `chompers` provider
-that routes through the `llm-server` proxy deployed at `https://llm.chompe.rs`.
-It preserves the upstream OpenCode (Zen) model catalog (so model IDs such as
-`deepseek-v4-pro` stay correct), adds the `X-Zen-Api-Key` header, and registers
-an OAuth flow so users can authenticate via `/login chompers`.
+The `.pi/extensions/chompers-auth.ts` file registers a `chompers` provider that
+routes through the restrictive LLM proxy. It preserves the upstream model
+catalog, adds the required `X-Zen-Api-Key` header, and registers an OAuth flow so
+users can authenticate with `/login chompers`.
 
 The built-in `opencode` provider is hidden (registered with an empty model list)
-to avoid showing duplicate OpenCode models next to the `chompers` proxy models.
+to avoid showing duplicate models next to the proxy models.
 
-The OAuth logic is extracted into `.pi/lib/llm-server-auth.ts`:
+Authentication logic is in `.pi/lib/llm-server-auth.ts`:
 
 - **With `GITHUB_TOKEN` set:** `/login chompers` exchanges the token directly
-  for an llm-server session token.
-- **Without `GITHUB_TOKEN`:** `/login chompers` starts a GitHub device flow,
-  asks the user to authorize in a browser, and polls the proxy until the
-  session token is issued.
+  for a proxy session token.
+- **Without `GITHUB_TOKEN`:** `/login chompers` starts a GitHub device flow and
+  polls the proxy until the session token is issued.
 
-The provider also declares `apiKey: "$ZEN_API_KEY"` (without sending it as
-an `Authorization` header) so Pi considers it configured at startup. This means
-`defaultProvider: "chompers"` and `defaultModel: "deepseek-v4-pro"` are selected
-immediately, before `/login` is run. The actual `Authorization: Bearer` header is
-injected at request time from the OAuth credential stored by Pi after `/login
-chompers`.
+The provider declares `apiKey: "$ZEN_API_KEY"` so Pi considers it configured at
+startup, which lets `defaultProvider: "chompers"` and
+`defaultModel: "deepseek-v4-flash"` be selected immediately. The actual
+`Authorization: Bearer` header is injected at request time from the OAuth
+credential stored by Pi after `/login chompers`.
 
-The session token lasts for the lifetime configured by `llm-server` (default 8
-hours). When it expires, re-run `/login chompers`.
-
-To log out, run `/logout` inside Pi and select `chompers` from the OAuth
-provider selector. This clears Pi's stored credential; the next request will
-prompt for authentication again.
-
-> Note: The original `opencode-server.ts` extension is preserved in
-> `.pi/extensions-inactive/` and is no longer loaded. It was left untouched
-> per the project owner's request.
+The session token lasts for the lifetime configured by the proxy (default 8
+hours). When it expires, re-run `/login chompers`. To log out, run `/logout` and
+select `chompers`.
 
 ### Packages
 
-The `auditor` package (`git:github.com/dluman/auditor`) is included by default, providing automated code review and quality analysis tools integrated into the agent workflow.
+The `auditor` package (`git:github.com/dluman/auditor`) is included by default
+and provides automated code-review and quality-analysis tools. Instructors can
+remove it from `.pi/settings.json` if it is not needed for a given assignment.
+
+## Distributing With Assignments
+
+This configuration is intended to be copied into assignment repositories. When
+distributing it:
+
+1. Keep the `.pi/` directory under version control.
+2. Add `.pi/git/` and `.pi/.pi/` to `.gitignore` so students do not commit cache
+   and session data.
+3. Provide students with the required `ZEN_API_KEY` (and optionally a
+   `GITHUB_TOKEN` if you want to skip the device flow).
+4. Edit `.pi/settings.json` to select the model, thinking level, and packages
+   appropriate for the assignment.
+5. Add or remove extensions under `.pi/extensions/` as needed.
 
 ## Customizing
 
-To adapt this template for your own project:
-
-1. Edit `.pi/settings.json` to change the default model, thinking level, or add/remove packages.
-2. Add additional extensions under `.pi/extensions/` as `.ts` or `.js` files.
-3. Pi will automatically manage the `.pi/git/` and `.pi/.pi/` directories — add them to your `.gitignore`.
+- Change the default model in `.pi/settings.json`.
+- Add or remove packages in `.pi/settings.json`.
+- Add assignment-specific extensions under `.pi/extensions/`.
+- See [`dluman/llm-server`](https://github.com/dluman/llm-server) for proxy
+  source and deployment details.
 
 ## License
 
-This template is dedicated to the public domain under [CC0 1.0 Universal](LICENSE).
+This starting configuration is dedicated to the public domain under [CC0 1.0 Universal](LICENSE).
