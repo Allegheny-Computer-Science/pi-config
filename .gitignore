@@ -142,3 +142,7 @@ cython_debug/
 
 # Pi configuration
 !.pi/lib/
+.pi/git/
+.pi/.pi/
+.pi/.sessions
+.session.jsonl
